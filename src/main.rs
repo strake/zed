@@ -8,10 +8,19 @@ extern crate syscall;
 extern crate real;
 extern crate rustbox;
 
+mod file;
+mod fs;
+mod io;
+mod posix;
+mod random;
+mod sys;
+
 use core::default::Default;
 use core::cmp::*;
+use fs::*;
 use real::vec::*;
 use rustbox::{ RustBox, Key, RB_NORMAL };
+use std::io::{ BufRead, Write };
 
 use Attitude::*;
 use Reach::*;
@@ -99,9 +108,23 @@ fn draw(ui: &RustBox, b: &Buffer, topRow: usize) {
 }
 
 fn main() {
+    let (mut b, path) = match std::env::args().skip(1).next() {
+        None => panic!("no file given"),
+        Some(path) =>
+            (Buffer {
+                 xss: match std::fs::File::open(&path) {
+                     Err(_) => Vec::new(),
+                     Ok(f) => Vec::from_iter(std::io::BufReader::new(&f).
+                                             lines().filter_map(Result::ok).
+                                             map(|s| Vec::from_iter(s.chars()).
+                                                     expect("alloc failed")).
+                                             chain(Some(Vec::new()))).
+                              expect("alloc failed"),
+                 },
+                 pt: (0, 1),
+             }, { let mut p = path.into_bytes(); p.push(0); p }),
+    };
     let ui = RustBox::init(Default::default()).unwrap();
-    let mut b = Buffer { xss: Vec::new(), pt: (0, 1) };
-    if !b.xss.insert(0, Vec::new()) { panic!("alloc failed") };
 
     loop {
         draw(&ui, &b, 1);
@@ -114,6 +137,20 @@ fn main() {
                 Key::Home  => { b.mv(Left,  End);  true },
                 Key::End   => { b.mv(Right, End);  true },
                 Key::Ctrl('c') => { return },
+                Key::Ctrl('x') => atomicWriteFileAt(
+                                      posix::fs::AT_FDCWD, &path[0] as *const u8, true,
+                                      |mut f| {
+                                          for (k, xs) in b.xss.iter().enumerate() {
+                                              try!(io::writeCode(
+                                                       |x, b| core::char::encode_utf8_raw(x as u32, b),
+                                                       &mut f,
+                                                       if k > 0 { "\n" } else { "" }.chars().
+                                                       chain(xs.iter().map(|p|*p))
+                                                   ));
+                                          }
+                                          f.flush()
+                                      }
+                                  ).is_ok(),
                 Key::Ctrl('h') |
                 Key::Backspace => b.deleteBack(),
                 Key::Tab     => b.insert('\t'),
