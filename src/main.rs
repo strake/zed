@@ -107,6 +107,12 @@ fn draw(ui: &RustBox, b: &Buffer, topRow: usize) {
     ui.present();
 }
 
+enum UnsavedWorkFlag {
+    Saved,
+    Modified,
+    Warned,
+}
+
 fn main() {
     let (mut b, path) = match std::env::args().skip(1).next() {
         None => panic!("no file given"),
@@ -126,6 +132,8 @@ fn main() {
     };
     let ui = RustBox::init(Default::default()).unwrap();
 
+    let mut unsavedWorkFlag = UnsavedWorkFlag::Saved;
+
     loop {
         draw(&ui, &b, 1);
         match ui.poll_event(false) {
@@ -136,26 +144,32 @@ fn main() {
                 Key::Down  => { b.mv(Down,  Unit); true },
                 Key::Home  => { b.mv(Left,  End);  true },
                 Key::End   => { b.mv(Right, End);  true },
-                Key::Ctrl('c') => { return },
-                Key::Ctrl('x') => atomicWriteFileAt(
-                                      posix::fs::AT_FDCWD, &path[0] as *const u8, true,
-                                      |mut f| {
-                                          for (k, xs) in b.xss.iter().enumerate() {
-                                              try!(io::writeCode(
-                                                       |x, b| core::char::encode_utf8_raw(x as u32, b),
-                                                       &mut f,
-                                                       if k > 0 { "\n" } else { "" }.chars().
-                                                       chain(xs.iter().map(|p|*p))
-                                                   ));
-                                          }
-                                          f.flush()
-                                      }
-                                  ).is_ok(),
+                Key::Ctrl('c') => match unsavedWorkFlag {
+                    UnsavedWorkFlag::Saved | UnsavedWorkFlag::Warned => { return },
+                    UnsavedWorkFlag::Modified => { unsavedWorkFlag = UnsavedWorkFlag::Warned; true },
+                },
+                Key::Ctrl('x') => {
+                    let c = atomicWriteFileAt(
+                        posix::fs::AT_FDCWD, &path[0] as *const u8, true,
+                        |mut f| {
+                            for (k, xs) in b.xss.iter().enumerate() {
+                                try!(io::writeCode(
+                                         |x, b| core::char::encode_utf8_raw(x as u32, b),
+                                         &mut f,
+                                         if k > 0 { "\n" } else { "" }.chars().chain(xs.iter().map(|p|*p))
+                                ));
+                            }
+                            f.flush()
+                        }
+                    );
+                    if c.is_ok() { unsavedWorkFlag = UnsavedWorkFlag::Saved };
+                    c.is_ok()
+                },
                 Key::Ctrl('h') |
-                Key::Backspace => b.deleteBack(),
-                Key::Tab     => b.insert('\t'),
-                Key::Enter   => b.insert('\n'),
-                Key::Char(x) => b.insert(x),
+                Key::Backspace => { unsavedWorkFlag = UnsavedWorkFlag::Modified; b.deleteBack() },
+                Key::Tab     => { unsavedWorkFlag = UnsavedWorkFlag::Modified; b.insert('\t') },
+                Key::Enter   => { unsavedWorkFlag = UnsavedWorkFlag::Modified; b.insert('\n') },
+                Key::Char(x) => { unsavedWorkFlag = UnsavedWorkFlag::Modified; b.insert(x) },
                 _ => true,
             },
             Err(_) => false,
