@@ -20,7 +20,7 @@ use core::default::Default;
 use core::cmp::*;
 use fs::*;
 use real::vec::*;
-use rustbox::{ RustBox, Key, RB_NORMAL, RB_REVERSE };
+use rustbox::{ RustBox, Key, RB_NORMAL, RB_REVERSE, RB_BOLD };
 use std::io::{ BufRead, Write };
 
 use Attitude::*;
@@ -110,16 +110,20 @@ fn draw(ui: &RustBox, b: &Buffer, topRow: usize, stat: Status) {
 }
 
 fn drawStatus(ui: &RustBox, stat: Status) {
+    let fgcolor = if stat.failure { rustbox::Color::Red } else { rustbox::Color::White };
+    let bgcolor = rustbox::Color::Black;
     let curs_y = ui.height() - 1;
     for curs_x in 0..ui.width() {
-        ui.print_char(curs_x, curs_y, RB_REVERSE, rustbox::Color::White, rustbox::Color::Black, ' ');
+        ui.print_char(curs_x, curs_y, RB_REVERSE, fgcolor, bgcolor, ' ');
     }
-    if stat.unsavedWork == UnsavedWorkFlag::Warned {
-        ui.print(0, curs_y, RB_REVERSE, rustbox::Color::White, rustbox::Color::Black, "WARNING: File modified; work will be lost! (once more to quit)");
+    if stat.failure {
+        ui.print(0, curs_y, RB_REVERSE | RB_BOLD, fgcolor, bgcolor, "OPERATION FAILED");
+    } else if stat.unsavedWork == UnsavedWorkFlag::Warned {
+        ui.print(0, curs_y, RB_REVERSE, fgcolor, bgcolor, "WARNING: File modified; work will be lost! (once more to quit)");
     } else {
-        ui.print(0, curs_y, RB_REVERSE, rustbox::Color::White, rustbox::Color::Black, stat.filePath);
+        ui.print(0, curs_y, RB_REVERSE, fgcolor, bgcolor, stat.filePath);
         for (i, &x) in ['[', match stat.unsavedWork { UnsavedWorkFlag::Saved => '-', _ => '*' }, ']'].into_iter().enumerate() {
-            ui.print_char(stat.filePath.len() + i + 1, curs_y, RB_REVERSE, rustbox::Color::White, rustbox::Color::Black, x);
+            ui.print_char(stat.filePath.len() + i + 1, curs_y, RB_REVERSE, fgcolor, bgcolor, x);
         }
     }
 }
@@ -128,6 +132,7 @@ fn drawStatus(ui: &RustBox, stat: Status) {
 struct Status<'a> {
     filePath: &'a str,
     unsavedWork: UnsavedWorkFlag,
+    failure: bool,
 }
 
 impl<'a> Status<'a> {
@@ -164,12 +169,13 @@ fn main() {
     let mut stat = Status {
         filePath: path_string.as_str(),
         unsavedWork: UnsavedWorkFlag::Saved,
+        failure: false,
     };
     let ui = RustBox::init(Default::default()).unwrap();
 
     loop {
         draw(&ui, &b, 1, stat);
-        match ui.poll_event(false) {
+        stat.failure = !match ui.poll_event(false) {
             Ok(rustbox::Event::KeyEvent(Some(key))) => match key {
                 Key::Left  => { b.mv(Left,  Unit); stat.unwarn(); true },
                 Key::Right => { b.mv(Right, Unit); stat.unwarn(); true },
