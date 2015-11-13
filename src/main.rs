@@ -116,7 +116,7 @@ enum Reach { End, Unit }
 
 fn nextTabStop(logTS: usize, pos: usize) -> usize { (pos + (1 << logTS)) & (!0 << logTS) }
 
-fn draw(ui: &RustBox, b: &Buffer, topRow: usize, stat: Status) {
+fn draw(ui: &RustBox, b: &EditBuffer, topRow: usize) {
     assert!(topRow >= 1);
     let logTabStop = 3;
     let curse = |curs_x, p: &char| match *p {
@@ -124,15 +124,15 @@ fn draw(ui: &RustBox, b: &Buffer, topRow: usize, stat: Status) {
         _ => curs_x + 1
     };
     ui.clear();
-    for (curs_y, xs) in b.xss.iter().skip(topRow - 1).enumerate().take(ui.height() - 1) {
+    for (curs_y, xs) in b.buffer.xss.iter().skip(topRow - 1).enumerate().take(ui.height() - 1) {
         let mut curs_x = 0;
         for x in xs.iter() {
             ui.print_char(curs_x, curs_y, RB_NORMAL, rustbox::Color::White, rustbox::Color::Black, *x);
             curs_x = curse(curs_x, x);
         }
     }
-    drawStatus(ui, stat);
-    ui.set_cursor(b.xss[b.pt.1 - 1].iter().take(b.pt.0).fold(0, curse) as isize, (b.pt.1 - topRow) as isize);
+    drawStatus(ui, b.status);
+    ui.set_cursor(b.buffer.xss[b.buffer.pt.1 - 1].iter().take(b.buffer.pt.0).fold(0, curse) as isize, (b.buffer.pt.1 - topRow) as isize);
     ui.present();
 }
 
@@ -175,16 +175,19 @@ enum UnsavedWorkFlag {
     Warned,
 }
 
-struct EditBuffer {
+struct EditBuffer<'a> {
     buffer: Buffer,
     actLog: ActLog,
+    status: Status<'a>,
 }
 
-impl EditBuffer {
+impl<'a> EditBuffer<'a> {
     #[inline] fn insert(&mut self, x: char) -> bool {
         let pt = self.buffer.pt;
         let xs = match Vec::from_iter([x].into_iter().map(|p|*p)) { None => return false, Some(xs) => xs };
-        self.actLog.reserve(1) && self.buffer.insert(x) && self.actLog.ag(Act { pt: pt, insert: xs, delete: Vec::new() })
+        self.actLog.reserve(1) && self.buffer.insert(x) &&
+        self.actLog.ag(Act { pt: pt, insert: xs, delete: Vec::new() }) &&
+        { self.status.unsavedWork = UnsavedWorkFlag::Modified; true }
     }
 
     #[inline] fn deleteBack(&mut self) -> bool {
@@ -193,11 +196,18 @@ impl EditBuffer {
         self.actLog.reserve(1) && match self.buffer.deleteBack() {
             None => false,
             Some(None) => true,
-            Some(Some(x)) => { xs.push(x); self.actLog.ag(Act { pt: self.buffer.pt, insert: Vec::new(), delete: xs }) }
+            Some(Some(x)) => {
+                xs.push(x);
+                self.status.unsavedWork = UnsavedWorkFlag::Modified;
+                self.actLog.ag(Act { pt: self.buffer.pt, insert: Vec::new(), delete: xs })
+            },
         }
     }
 
-    #[inline] fn mv(&mut self, a: Attitude, r: Reach) { self.buffer.mv(a, r) }
+    #[inline] fn mv(&mut self, a: Attitude, r: Reach) {
+        self.buffer.mv(a, r);
+        self.status.unwarn();
+    }
 
     #[inline] fn unag(&mut self) -> bool { match self.actLog.unag() { None => true, Some(act) => self.buffer.ag(act.pt, &act.delete, &act.insert) } }
     #[inline] fn reag(&mut self) -> bool { match self.actLog.reag() { None => true, Some(act) => self.buffer.ag(act.pt, &act.insert, &act.delete) } }
@@ -221,29 +231,30 @@ fn main() {
                      pt: (0, 1),
                  },
                  actLog: ActLog::new(),
+                 status: Status {
+                     filePath: "",
+                     unsavedWork: UnsavedWorkFlag::Saved,
+                     failure: false,
+                 },
              }, path),
     };
     let path_bytes = { let mut p = path_string.clone().into_bytes(); p.push(0); p };
-    let mut stat = Status {
-        filePath: path_string.as_str(),
-        unsavedWork: UnsavedWorkFlag::Saved,
-        failure: false,
-    };
+    b.status.filePath = path_string.as_str();
     let ui = RustBox::init(Default::default()).unwrap();
 
     loop {
-        draw(&ui, &b.buffer, 1, stat);
-        stat.failure = !match ui.poll_event(false) {
+        draw(&ui, &b, 1);
+        b.status.failure = !match ui.poll_event(false) {
             Ok(rustbox::Event::KeyEvent(Some(key))) => match key {
-                Key::Left  => { b.mv(Left,  Unit); stat.unwarn(); true },
-                Key::Right => { b.mv(Right, Unit); stat.unwarn(); true },
-                Key::Up    => { b.mv(Up,    Unit); stat.unwarn(); true },
-                Key::Down  => { b.mv(Down,  Unit); stat.unwarn(); true },
-                Key::Home  => { b.mv(Left,  End);  stat.unwarn(); true },
-                Key::End   => { b.mv(Right, End);  stat.unwarn(); true },
-                Key::Ctrl('c') => match stat.unsavedWork {
+                Key::Left  => { b.mv(Left,  Unit); true },
+                Key::Right => { b.mv(Right, Unit); true },
+                Key::Up    => { b.mv(Up,    Unit); true },
+                Key::Down  => { b.mv(Down,  Unit); true },
+                Key::Home  => { b.mv(Left,  End);  true },
+                Key::End   => { b.mv(Right, End);  true },
+                Key::Ctrl('c') => match b.status.unsavedWork {
                     UnsavedWorkFlag::Saved | UnsavedWorkFlag::Warned => { return },
-                    UnsavedWorkFlag::Modified => { stat.unsavedWork = UnsavedWorkFlag::Warned; true },
+                    UnsavedWorkFlag::Modified => { b.status.unsavedWork = UnsavedWorkFlag::Warned; true },
                 },
                 Key::Ctrl('x') => {
                     let c = atomicWriteFileAt(
@@ -259,14 +270,14 @@ fn main() {
                             f.flush()
                         }
                     );
-                    if c.is_ok() { stat.unsavedWork = UnsavedWorkFlag::Saved };
+                    if c.is_ok() { b.status.unsavedWork = UnsavedWorkFlag::Saved };
                     c.is_ok()
                 },
                 Key::Ctrl('h') |
-                Key::Backspace => { stat.unsavedWork = UnsavedWorkFlag::Modified; b.deleteBack() },
-                Key::Tab     => { stat.unsavedWork = UnsavedWorkFlag::Modified; b.insert('\t') },
-                Key::Enter   => { stat.unsavedWork = UnsavedWorkFlag::Modified; b.insert('\n') },
-                Key::Char(x) => { stat.unsavedWork = UnsavedWorkFlag::Modified; b.insert(x) },
+                Key::Backspace => b.deleteBack(),
+                Key::Tab     => b.insert('\t'),
+                Key::Enter   => b.insert('\n'),
+                Key::Char(x) => b.insert(x),
                 _ => true,
             },
             Err(_) => false,
