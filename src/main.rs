@@ -68,9 +68,9 @@ impl Buffer {
             (Up,    End)  => { self.pt.1 = 1; },
             (Down,  End)  => { self.pt.1 = self.xss.length() + 1; },
             (Left,  Unit) => if self.pt.0 > 0 { self.pt.0 -= 1; }
-                             else { self.mv(Up,    Unit); self.mv(Right, End); },
+                             else if self.pt.1 > 1 { self.pt.1 -= 1; self.mv(Right, End); },
             (Right, Unit) => if self.pt.0 < self.xss[self.pt.1 - 1].length() { self.pt.0 += 1 }
-                             else { self.mv(Down,  Unit); self.mv(Left,  End); },
+                             else if self.pt.1 < self.xss.length() { self.pt.1 += 1; self.mv(Left, End); },
             (Up,    Unit) => if self.pt.1 > 1 {
                                  self.pt.1 -= 1;
                                  self.pt.0 = min(self.pt.0, self.xss[self.pt.1 - 1].length());
