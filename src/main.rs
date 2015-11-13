@@ -17,6 +17,7 @@ mod posix;
 mod random;
 mod sys;
 
+use actLog::{ Act, ActLog };
 use core::default::Default;
 use core::cmp::*;
 use fs::*;
@@ -48,17 +49,34 @@ impl Buffer {
         true
     }
 
-    fn deleteBack(&mut self) -> bool {
+    fn deleteBack(&mut self) -> Option<Option<char>> {
         if self.pt.0 > 0 {
             self.pt.0 -= 1;
-            self.xss[self.pt.1 - 1].delete(self.pt.0);
-            true
+            Some(Some(self.xss[self.pt.1 - 1].delete(self.pt.0)))
         } else if self.pt.1 > 1 {
             self.pt.1 -= 1;
             self.mv(Right, End);
-            let xs = self.xss.delete(self.pt.1);
-            self.xss[self.pt.1 - 1].append(xs)
-        } else { true }
+            let n = self.pt.1;
+            if self.joinRow(n) { Some(Some('\n')) } else { None }
+        } else { Some(None) }
+    }
+
+    fn deleteForth(&mut self) -> Option<Option<char>> {
+        if self.pt.0 < self.xss[self.pt.1 - 1].length() {
+            Some(Some(self.xss[self.pt.1 - 1].delete(self.pt.0)))
+        } else if self.pt.1 <= self.xss.length() {
+            let n = self.pt.1;
+            if self.joinRow(n) { Some(Some('\n')) } else { None }
+        } else { Some(None) }
+    }
+
+    fn joinRow(&mut self, n: usize) -> bool {
+        let l = self.xss[n].length();
+        self.xss[self.pt.1 - 1].reserve(l) && {
+            let xs = self.xss.delete(n);
+            self.xss[n-1].append(xs);
+            true
+        }
     }
 
     #[inline]
@@ -81,6 +99,14 @@ impl Buffer {
                                  self.pt.0 = min(self.pt.0, self.xss[self.pt.1 - 1].length());
                              },
         }
+    }
+
+    #[inline]
+    fn ag(&mut self, pt: (usize, usize), insert: &Vec<char>, delete: &Vec<char>) -> bool {
+        self.pt = pt;
+        for &_ in delete.iter() { match self.deleteForth() { None => return false, _ => () } };
+        for &x in insert.iter() { if !self.insert(x) { return false } };
+        true
     }
 }
 
@@ -149,21 +175,52 @@ enum UnsavedWorkFlag {
     Warned,
 }
 
+struct EditBuffer {
+    buffer: Buffer,
+    actLog: ActLog,
+}
+
+impl EditBuffer {
+    #[inline] fn insert(&mut self, x: char) -> bool {
+        let pt = self.buffer.pt;
+        let xs = match Vec::from_iter([x].into_iter().map(|p|*p)) { None => return false, Some(xs) => xs };
+        self.actLog.reserve(1) && self.buffer.insert(x) && self.actLog.ag(Act { pt: pt, insert: xs, delete: Vec::new() })
+    }
+
+    #[inline] fn deleteBack(&mut self) -> bool {
+        if self.buffer.pt.0 == 0 && self.buffer.pt.1 == 1 { return true };
+        let mut xs = match Vec::withCapacity(1) { None => return false, Some(xs) => xs };
+        self.actLog.reserve(1) && match self.buffer.deleteBack() {
+            None => false,
+            Some(None) => true,
+            Some(Some(x)) => { xs.push(x); self.actLog.ag(Act { pt: self.buffer.pt, insert: Vec::new(), delete: xs }) }
+        }
+    }
+
+    #[inline] fn mv(&mut self, a: Attitude, r: Reach) { self.buffer.mv(a, r) }
+
+    #[inline] fn unag(&mut self) -> bool { match self.actLog.unag() { None => true, Some(act) => self.buffer.ag(act.pt, &act.delete, &act.insert) } }
+    #[inline] fn reag(&mut self) -> bool { match self.actLog.reag() { None => true, Some(act) => self.buffer.ag(act.pt, &act.insert, &act.delete) } }
+}
+
 fn main() {
     let (mut b, path_string) = match std::env::args().skip(1).next() {
         None => panic!("no file given"),
         Some(path) =>
-            (Buffer {
-                 xss: match std::fs::File::open(&path) {
-                     Err(_) => Vec::new(),
-                     Ok(f) => Vec::from_iter(std::io::BufReader::new(&f).
-                                             lines().filter_map(Result::ok).
-                                             map(|s| Vec::from_iter(s.chars()).
-                                                     expect("alloc failed")).
-                                             chain(Some(Vec::new()))).
-                              expect("alloc failed"),
+            (EditBuffer {
+                 buffer: Buffer {
+                     xss: match std::fs::File::open(&path) {
+                         Err(_) => Vec::new(),
+                         Ok(f) => Vec::from_iter(std::io::BufReader::new(&f).
+                                                 lines().filter_map(Result::ok).
+                                                 map(|s| Vec::from_iter(s.chars()).
+                                                         expect("alloc failed")).
+                                                 chain(Some(Vec::new()))).
+                                  expect("alloc failed"),
+                     },
+                     pt: (0, 1),
                  },
-                 pt: (0, 1),
+                 actLog: ActLog::new(),
              }, path),
     };
     let path_bytes = { let mut p = path_string.clone().into_bytes(); p.push(0); p };
@@ -175,7 +232,7 @@ fn main() {
     let ui = RustBox::init(Default::default()).unwrap();
 
     loop {
-        draw(&ui, &b, 1, stat);
+        draw(&ui, &b.buffer, 1, stat);
         stat.failure = !match ui.poll_event(false) {
             Ok(rustbox::Event::KeyEvent(Some(key))) => match key {
                 Key::Left  => { b.mv(Left,  Unit); stat.unwarn(); true },
@@ -192,7 +249,7 @@ fn main() {
                     let c = atomicWriteFileAt(
                         posix::fs::AT_FDCWD, &path_bytes[0] as *const u8, true,
                         |mut f| {
-                            for (k, xs) in b.xss.iter().enumerate() {
+                            for (k, xs) in b.buffer.xss.iter().enumerate() {
                                 try!(io::writeCode(
                                          |x, b| core::char::encode_utf8_raw(x as u32, b),
                                          &mut f,
