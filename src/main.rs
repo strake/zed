@@ -1,5 +1,5 @@
+#![feature(char_internals)]
 #![feature(core)]
-#![feature(libc)]
 
 extern crate core;
 extern crate libc;

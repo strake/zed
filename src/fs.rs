@@ -1,6 +1,6 @@
 use core::ops::*;
 use file::*;
-use libc::consts::os::posix88 as posix;
+use libc;
 use random::*;
 use std::io;
 
@@ -15,12 +15,12 @@ fn randname(cs : &mut [u8]) {
 
 fn mktempat<'a, R : Clone>(dirfd : isize, template : &mut [u8], range : R, flags : usize) -> io::Result<File> where [u8] : IndexMut<R, Output = [u8]> {
     let tries = 65536;
-    let mut fd = -posix::EEXIST as isize;
+    let mut fd = -libc::EEXIST as isize;
     for _ in 1..tries {
         randname(&mut template[range.clone()]);
-        fd = unsafe { syscall!(OPENAT, dirfd, &template[0] as *const u8, flags | (posix::O_RDWR | posix::O_CREAT | posix::O_EXCL) as usize, 0o600) as isize };
+        fd = unsafe { syscall!(OPENAT, dirfd, &template[0] as *const u8, flags | (libc::O_RDWR | libc::O_CREAT | libc::O_EXCL) as usize, 0o600) as isize };
         if fd >= 0 { return Ok(File { fd : fd }) };
-        if fd < 0 && fd != -posix::EEXIST as isize { break };
+        if fd < 0 && fd != -libc::EEXIST as isize { break };
     }
     return Err(io::Error::from_raw_os_error(-fd as i32));
 }
