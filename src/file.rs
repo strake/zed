@@ -1,5 +1,5 @@
 extern crate core;
-extern crate real;
+extern crate libreal;
 extern crate std;
 
 use std::io;

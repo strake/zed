@@ -4,11 +4,12 @@
 
 extern crate core;
 extern crate libc;
+extern crate libreal;
 #[macro_use]
 extern crate syscall;
-extern crate real;
 extern crate rustbox;
 
+mod actLog;
 mod file;
 mod fs;
 mod io;
@@ -19,7 +20,7 @@ mod sys;
 use core::default::Default;
 use core::cmp::*;
 use fs::*;
-use real::vec::*;
+use libreal::vec::*;
 use rustbox::{ RustBox, Key, RB_NORMAL, RB_REVERSE, RB_BOLD };
 use std::io::{ BufRead, Write };
 

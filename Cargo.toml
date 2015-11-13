@@ -7,7 +7,7 @@ authors = ["M Farkas-Dyck <strake888@gmail.com>"]
 libc = "*"
 rustbox = "*"
 
-[dependencies.real]
+[dependencies.libreal]
 path = "../libreal.rs"
 
 [dependencies.syscall]
