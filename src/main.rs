@@ -38,9 +38,9 @@ impl Buffer {
         if !match x {
             '\n' => match self.xss[self.pt.1 - 1].splitOff(self.pt.0) {
                 None => false,
-                Some(xs) => self.xss.insert(self.pt.1, xs),
+                Some(xs) => self.xss.insert(self.pt.1, xs).is_ok(),
             },
-            _ => self.xss[self.pt.1 - 1].insert(self.pt.0, x)
+            _ => self.xss[self.pt.1 - 1].insert(self.pt.0, x).is_ok()
         } { return false };
         match x {
             '\n' => { self.pt.1 += 1; self.pt.0 = 0; },
@@ -184,7 +184,7 @@ struct EditBuffer<'a> {
 impl<'a> EditBuffer<'a> {
     #[inline] fn insert(&mut self, x: char) -> bool {
         let pt = self.buffer.pt;
-        let xs = match Vec::from_iter([x].into_iter().map(|p|*p)) { None => return false, Some(xs) => xs };
+        let xs = match Vec::from_iter([x].into_iter().map(|p|*p)) { Err(_) => return false, Ok(xs) => xs };
         self.actLog.reserve(1) && self.buffer.insert(x) &&
         self.actLog.ag(Act { pt: pt, insert: xs, delete: Vec::new() }) &&
         { self.status.unsavedWork = UnsavedWorkFlag::Modified; true }
@@ -223,9 +223,9 @@ fn main() {
                          Err(_) => Vec::new(),
                          Ok(f) => Vec::from_iter(std::io::BufReader::new(&f).
                                                  lines().filter_map(Result::ok).
-                                                 map(|s| Vec::from_iter(s.chars()).
+                                                 map(|s| Vec::from_iter(s.chars()).ok().
                                                          expect("alloc failed")).
-                                                 chain(Some(Vec::new()))).
+                                                 chain(Some(Vec::new()))).ok().
                                   expect("alloc failed"),
                      },
                      pt: (0, 1),

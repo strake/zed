@@ -28,7 +28,7 @@ impl ActLog {
     #[inline]
     pub fn ag(&mut self, act: Act) -> bool {
         self.acta.truncate(self.pos);
-        let c = self.acta.push(act);
+        let c = self.acta.push(act).is_ok();
         if c { self.pos += 1 };
         c
     }
