@@ -4,7 +4,7 @@ version = "0.1.0"
 authors = ["M Farkas-Dyck <strake888@gmail.com>"]
 
 [dependencies]
-libc = "*"
-libreal = "*"
-rustbox = "*"
-syscall = "*"
+libc = "0.2"
+libreal = "0.11"
+rustbox = "0.8"
+syscall = "0.2"
