@@ -1,4 +1,4 @@
-use libreal::vec::*;
+use libreal::collections::vec::*;
 
 pub struct Act {
     pub pt: (usize, usize),

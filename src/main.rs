@@ -19,7 +19,7 @@ use actLog::{ Act, ActLog };
 use core::default::Default;
 use core::cmp::*;
 use fs::*;
-use libreal::vec::*;
+use libreal::collections::vec::*;
 use rustbox::{ RustBox, Key, RB_NORMAL, RB_REVERSE, RB_BOLD };
 use std::io::{ BufRead, Write };
 
@@ -34,7 +34,7 @@ struct Buffer {
 impl Buffer {
     fn insert(&mut self, x: char) -> bool {
         if !match x {
-            '\n' => match self.xss[self.pt.1 - 1].splitOff(self.pt.0) {
+            '\n' => match self.xss[self.pt.1 - 1].split_off(self.pt.0) {
                 None => false,
                 Some(xs) => self.xss.insert(self.pt.1, xs).is_ok(),
             },
@@ -190,7 +190,7 @@ impl<'a> EditBuffer<'a> {
 
     #[inline] fn deleteBack(&mut self) -> bool {
         if self.buffer.pt.0 == 0 && self.buffer.pt.1 == 1 { return true };
-        let mut xs = match Vec::withCapacity(1) { None => return false, Some(xs) => xs };
+        let mut xs = match Vec::with_capacity(1) { None => return false, Some(xs) => xs };
         self.actLog.reserve(1) && match self.buffer.deleteBack() {
             None => false,
             Some(None) => true,
