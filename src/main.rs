@@ -74,7 +74,7 @@ impl Buffer {
         let l = self.xss[n].length();
         self.xss[self.pt.1 - 1].reserve(l) && {
             let xs = self.xss.delete(n);
-            self.xss[n-1].append(xs);
+            let _ = self.xss[n-1].append(xs);
             true
         }
     }
@@ -197,7 +197,7 @@ impl<'a> EditBuffer<'a> {
             None => false,
             Some(None) => true,
             Some(Some(x)) => {
-                xs.push(x);
+                let _ = xs.push(x);
                 self.status.unsavedWork = UnsavedWorkFlag::Modified;
                 self.actLog.ag(Act { pt: self.buffer.pt, insert: Vec::new(), delete: xs })
             },
