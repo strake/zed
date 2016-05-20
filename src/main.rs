@@ -1,6 +1,7 @@
 #![feature(char_internals)]
 #![feature(convert)]
 #![feature(core)]
+#![feature(unicode)]
 
 extern crate core;
 extern crate libc;
@@ -213,6 +214,14 @@ impl<'a> EditBuffer<'a> {
     #[inline] fn reag(&mut self) -> bool { match self.actLog.reag() { None => true, Some(act) => self.buffer.ag(act.pt, &act.insert, &act.delete) } }
 }
 
+fn encode_utf8_raw(x: char, b: &mut [u8]) -> Option<usize> {
+    let l = x.len_utf8();
+    if b.len() < l { None } else {
+        for (i, c) in x.encode_utf8().enumerate() { b[i] = c }
+        Some(l)
+    }
+}
+
 fn main() {
     let (mut b, path_string) = match std::env::args().skip(1).next() {
         None => panic!("no file given"),
@@ -262,8 +271,7 @@ fn main() {
                         |mut f| {
                             for (k, xs) in b.buffer.xss.iter().enumerate() {
                                 try!(io::writeCode(
-                                         |x, b| core::char::encode_utf8_raw(x as u32, b),
-                                         &mut f,
+                                         encode_utf8_raw, &mut f,
                                          if k > 0 { "\n" } else { "" }.chars().chain(xs.iter().map(|p|*p))
                                 ));
                             }
