@@ -1,6 +1,3 @@
-#![feature(char_internals)]
-#![feature(convert)]
-#![feature(core)]
 #![feature(unicode)]
 
 extern crate core;
