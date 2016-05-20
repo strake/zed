@@ -11,7 +11,6 @@ mod actLog;
 mod file;
 mod fs;
 mod io;
-mod posix;
 mod random;
 mod sys;
 
@@ -264,7 +263,7 @@ fn main() {
                 },
                 Key::Ctrl('x') => {
                     let c = atomicWriteFileAt(
-                        posix::fs::AT_FDCWD, &path_bytes[0] as *const u8, true,
+                        libc::AT_FDCWD as isize, &path_bytes[0] as *const u8, true,
                         |mut f| {
                             for (k, xs) in b.buffer.xss.iter().enumerate() {
                                 try!(io::writeCode(
