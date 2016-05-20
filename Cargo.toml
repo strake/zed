@@ -7,6 +7,4 @@ authors = ["M Farkas-Dyck <strake888@gmail.com>"]
 libc = "*"
 libreal = "*"
 rustbox = "*"
-
-[dependencies.syscall]
-path = "../syscall.rs"
+syscall = "*"
