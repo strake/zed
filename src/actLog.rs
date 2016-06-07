@@ -1,4 +1,4 @@
-use libreal::collections::vec::*;
+use super::Vec;
 
 pub struct Act {
     pub pt: (usize, usize),
@@ -44,7 +44,7 @@ impl ActLog {
 
     #[inline]
     pub fn reag(&mut self) -> Option<&Act> {
-        if self.pos >= self.acta.length() { None }
+        if self.pos >= self.acta.len() { None }
         else {
             self.pos += 1;
             Some(&self.acta[self.pos - 1])

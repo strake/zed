@@ -1,26 +1,29 @@
+#![feature(decode_utf8)]
+#![feature(start)]
 #![feature(unicode)]
 
-extern crate core;
+extern crate std as core;
+
+extern crate containers;
+extern crate curse;
 extern crate libc;
-extern crate libreal;
-#[macro_use]
-extern crate syscall;
-extern crate rustbox;
+extern crate null_terminated;
+extern crate unix;
 
 mod actLog;
-mod file;
-mod fs;
 mod io;
-mod random;
-mod sys;
 
 use actLog::{ Act, ActLog };
-use core::default::Default;
+use containers::collections::*;
+use core::char::decode_utf8;
 use core::cmp::*;
-use fs::*;
-use libreal::collections::vec::*;
-use rustbox::{ RustBox, Key, RB_NORMAL, RB_REVERSE, RB_BOLD };
-use std::io::{ BufRead, Write };
+use core::mem;
+use curse::{ Key };
+use io::*;
+use null_terminated::Nul;
+use unix::err::OsErr;
+use unix::file::*;
+use unix::str::OsStr;
 
 use Attitude::*;
 use Reach::*;
@@ -59,16 +62,16 @@ impl Buffer {
     }
 
     fn deleteForth(&mut self) -> Option<Option<char>> {
-        if self.pt.0 < self.xss[self.pt.1 - 1].length() {
+        if self.pt.0 < self.xss[self.pt.1 - 1].len() {
             Some(Some(self.xss[self.pt.1 - 1].delete(self.pt.0)))
-        } else if self.pt.1 <= self.xss.length() {
+        } else if self.pt.1 <= self.xss.len() {
             let n = self.pt.1;
             if self.joinRow(n) { Some(Some('\n')) } else { None }
         } else { Some(None) }
     }
 
     fn joinRow(&mut self, n: usize) -> bool {
-        let l = self.xss[n].length();
+        let l = self.xss[n].len();
         self.xss[self.pt.1 - 1].reserve(l) && {
             let xs = self.xss.delete(n);
             let _ = self.xss[n-1].append(xs);
@@ -80,20 +83,20 @@ impl Buffer {
     fn mv(&mut self, a: Attitude, r: Reach) {
         match (a, r) {
             (Left,  End)  => { self.pt.0 = 0; },
-            (Right, End)  => { self.pt.0 = self.xss[self.pt.1 - 1].length(); },
+            (Right, End)  => { self.pt.0 = self.xss[self.pt.1 - 1].len(); },
             (Up,    End)  => { self.pt.1 = 1; },
-            (Down,  End)  => { self.pt.1 = self.xss.length() + 1; },
+            (Down,  End)  => { self.pt.1 = self.xss.len() + 1; },
             (Left,  Unit) => if self.pt.0 > 0 { self.pt.0 -= 1; }
                              else if self.pt.1 > 1 { self.pt.1 -= 1; self.mv(Right, End); },
-            (Right, Unit) => if self.pt.0 < self.xss[self.pt.1 - 1].length() { self.pt.0 += 1 }
-                             else if self.pt.1 < self.xss.length() { self.pt.1 += 1; self.mv(Left, End); },
+            (Right, Unit) => if self.pt.0 < self.xss[self.pt.1 - 1].len() { self.pt.0 += 1 }
+                             else if self.pt.1 < self.xss.len() { self.pt.1 += 1; self.mv(Left, End); },
             (Up,    Unit) => if self.pt.1 > 1 {
                                  self.pt.1 -= 1;
-                                 self.pt.0 = min(self.pt.0, self.xss[self.pt.1 - 1].length());
+                                 self.pt.0 = min(self.pt.0, self.xss[self.pt.1 - 1].len());
                              },
-            (Down,  Unit) => if self.pt.1 < self.xss.length() {
+            (Down,  Unit) => if self.pt.1 < self.xss.len() {
                                  self.pt.1 += 1;
-                                 self.pt.0 = min(self.pt.0, self.xss[self.pt.1 - 1].length());
+                                 self.pt.0 = min(self.pt.0, self.xss[self.pt.1 - 1].len());
                              },
         }
     }
@@ -113,7 +116,7 @@ enum Reach { End, Unit }
 
 fn nextTabStop(logTS: usize, pos: usize) -> usize { (pos + (1 << logTS)) & (!0 << logTS) }
 
-fn draw(ui: &RustBox, b: &EditBuffer, topRow: usize) {
+fn draw(ui: &mut curse::Term, b: &EditBuffer, topRow: usize) {
     assert!(topRow >= 1);
     let logTabStop = 3;
     let curse = |curs_x, p: &char| match *p {
@@ -124,37 +127,43 @@ fn draw(ui: &RustBox, b: &EditBuffer, topRow: usize) {
     for (curs_y, xs) in b.buffer.xss.iter().skip(topRow - 1).enumerate().take(ui.height() - 1) {
         let mut curs_x = 0;
         for x in xs.iter() {
-            ui.print_char(curs_x, curs_y, RB_NORMAL, rustbox::Color::White, rustbox::Color::Black, *x);
+            ui.print_char(curs_x, curs_y, curse::Face::empty(), curse::Color::White, curse::Color::Black, *x);
             curs_x = curse(curs_x, x);
         }
     }
     drawStatus(ui, b.status);
-    ui.set_cursor(b.buffer.xss[b.buffer.pt.1 - 1].iter().take(b.buffer.pt.0).fold(0, curse) as isize, (b.buffer.pt.1 - topRow) as isize);
-    ui.present();
+    ui.set_cursor(b.buffer.xss[b.buffer.pt.1 - 1].iter().take(b.buffer.pt.0).fold(0, curse), b.buffer.pt.1 - topRow);
+    ui.freshen();
 }
 
-fn drawStatus(ui: &RustBox, stat: Status) {
-    let fgcolor = if stat.failure { rustbox::Color::Red } else { rustbox::Color::White };
-    let bgcolor = rustbox::Color::Black;
+fn print_chars<I: Iterator<Item = char>>(ui: &mut curse::Term, x_pos: usize, y_pos: usize, face: curse::Face, fg: curse::Color, bg: curse::Color, xs: I) {
+    for (i, x) in xs.enumerate() { ui.print_char(x_pos+i, y_pos, face, fg, bg, x) }
+}
+
+fn drawStatus(ui: &mut curse::Term, stat: Status) {
+    let fgcolor = if stat.failure { curse::Color::Red } else { curse::Color::White };
+    let bgcolor = curse::Color::Black;
     let curs_y = ui.height() - 1;
     for curs_x in 0..ui.width() {
-        ui.print_char(curs_x, curs_y, RB_REVERSE, fgcolor, bgcolor, ' ');
+        ui.print_char(curs_x, curs_y, curse::REVERSE, fgcolor, bgcolor, ' ');
     }
     if stat.failure {
-        ui.print(0, curs_y, RB_REVERSE | RB_BOLD, fgcolor, bgcolor, "OPERATION FAILED");
+        print_chars(ui, 0, curs_y, curse::REVERSE | curse::BOLD, fgcolor, bgcolor, "OPERATION FAILED".chars());
     } else if stat.unsavedWork == UnsavedWorkFlag::Warned {
-        ui.print(0, curs_y, RB_REVERSE, fgcolor, bgcolor, "WARNING: File modified; work will be lost! (once more to quit)");
+        print_chars(ui, 0, curs_y, curse::REVERSE, fgcolor, bgcolor, "WARNING: File modified; work will be lost! (once more to quit)".chars());
     } else {
-        ui.print(0, curs_y, RB_REVERSE, fgcolor, bgcolor, stat.filePath);
+        print_chars(ui, 0, curs_y, curse::REVERSE, fgcolor, bgcolor,
+                    decode_utf8(stat.filePath.iter().map(|&b|b))
+                        .map(|r| r.unwrap_or('\u{FFFD}')));
         for (i, &x) in ['[', match stat.unsavedWork { UnsavedWorkFlag::Saved => '-', _ => '*' }, ']'].into_iter().enumerate() {
-            ui.print_char(stat.filePath.len() + i + 1, curs_y, RB_REVERSE, fgcolor, bgcolor, x);
+            ui.print_char(stat.filePath.len() + i + 1, curs_y, curse::REVERSE, fgcolor, bgcolor, x);
         }
     }
 }
 
 #[derive(Clone, Copy, PartialEq)]
 struct Status<'a> {
-    filePath: &'a str,
+    filePath: &'a OsStr,
     unsavedWork: UnsavedWorkFlag,
     failure: bool,
 }
@@ -212,45 +221,40 @@ impl<'a> EditBuffer<'a> {
 
 fn encode_utf8_raw(x: char, b: &mut [u8]) -> Option<usize> {
     let l = x.len_utf8();
-    if b.len() < l { None } else {
-        for (i, c) in x.encode_utf8().enumerate() { b[i] = c }
-        Some(l)
-    }
+    if b.len() < l { None } else { x.encode_utf8(b); Some(l) }
 }
 
-fn main() {
-    let (mut b, path_string) = match std::env::args().skip(1).next() {
-        None => panic!("no file given"),
-        Some(path) =>
-            (EditBuffer {
-                 buffer: Buffer {
-                     xss: match std::fs::File::open(&path) {
-                         Err(_) => Vec::new(),
-                         Ok(f) => Vec::from_iter(std::io::BufReader::new(&f).
-                                                 lines().filter_map(Result::ok).
-                                                 map(|s| Vec::from_iter(s.chars()).ok().
-                                                         expect("alloc failed")).
-                                                 chain(Some(Vec::new()))).ok().
-                                  expect("alloc failed"),
-                     },
-                     pt: (0, 1),
-                 },
-                 actLog: ActLog::new(),
-                 status: Status {
-                     filePath: "",
-                     unsavedWork: UnsavedWorkFlag::Saved,
-                     failure: false,
-                 },
-             }, path),
+#[start]
+fn start(_: isize, c_argv: *const *const u8) -> isize {
+    extern { static environ: *const *const u8; }
+    unsafe { main(mem::transmute(c_argv), mem::transmute(environ)) }
+}
+
+fn main(args: &'static Nul<&'static Nul<u8>>,
+        _env: &'static Nul<&'static Nul<u8>>) -> isize {
+    let path: &'static Nul<u8> = args.iter().skip(1).next().expect("no file given");
+    let mut b = EditBuffer {
+        buffer: Buffer {
+            xss: Vec::from_iter(open_at(None, path, OpenMode::RdOnly, OpenFlags::empty(), FileMode::empty())
+                                    .unwrap().split(|x| x == b'\n', false).map(Result::<_, OsErr>::unwrap)
+                                    .map(|s| Vec::from_iter(decode_utf8(s.into_iter())
+                                                                .map(|r| r.unwrap_or('\u{FFFD}'))).ok()
+                                                 .expect("alloc failed"))).ok().expect("alloc failed"),
+            pt: (0, 1),
+        },
+        actLog: ActLog::new(),
+        status: Status {
+            filePath: path,
+            unsavedWork: UnsavedWorkFlag::Saved,
+            failure: false,
+        },
     };
-    let path_bytes = { let mut p = path_string.clone().into_bytes(); p.push(0); p };
-    b.status.filePath = path_string.as_str();
-    let ui = RustBox::init(Default::default()).unwrap();
+    let mut ui = curse::Term::init().unwrap();
 
     loop {
-        draw(&ui, &b, 1);
-        b.status.failure = !match ui.poll_event(false) {
-            Ok(rustbox::Event::KeyEvent(Some(key))) => match key {
+        draw(&mut ui, &b, 1);
+        b.status.failure = !match ui.next_event(None) {
+            Ok(Some(curse::Event::Key(key))) => match key {
                 Key::Left  => { b.mv(Left,  Unit); true },
                 Key::Right => { b.mv(Right, Unit); true },
                 Key::Up    => { b.mv(Up,    Unit); true },
@@ -258,12 +262,12 @@ fn main() {
                 Key::Home  => { b.mv(Left,  End);  true },
                 Key::End   => { b.mv(Right, End);  true },
                 Key::Ctrl('c') => match b.status.unsavedWork {
-                    UnsavedWorkFlag::Saved | UnsavedWorkFlag::Warned => { return },
+                    UnsavedWorkFlag::Saved | UnsavedWorkFlag::Warned => { return 0 },
                     UnsavedWorkFlag::Modified => { b.status.unsavedWork = UnsavedWorkFlag::Warned; true },
                 },
                 Key::Ctrl('x') => {
-                    let c = atomicWriteFileAt(
-                        libc::AT_FDCWD as isize, &path_bytes[0] as *const u8, true,
+                    let c = atomic_write_file_at(
+                        None, path, Clobber, (FilePermission::Read | FilePermission::Write) << USR,
                         |mut f| {
                             for (k, xs) in b.buffer.xss.iter().enumerate() {
                                 try!(io::writeCode(
@@ -277,7 +281,6 @@ fn main() {
                     if c.is_ok() { b.status.unsavedWork = UnsavedWorkFlag::Saved };
                     c.is_ok()
                 },
-                Key::Ctrl('h') |
                 Key::Backspace => b.deleteBack(),
                 Key::Tab     => b.insert('\t'),
                 Key::Enter   => b.insert('\n'),
