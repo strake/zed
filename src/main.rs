@@ -6,6 +6,7 @@ extern crate std as core;
 
 extern crate containers;
 extern crate curse;
+extern crate cursebox;
 extern crate libc;
 extern crate null_terminated;
 extern crate unix;
@@ -19,6 +20,7 @@ use core::char::decode_utf8;
 use core::cmp::*;
 use core::mem;
 use curse::{ Key };
+use cursebox::*;
 use io::*;
 use null_terminated::Nul;
 use unix::err::OsErr;
@@ -282,6 +284,12 @@ fn main(args: &'static Nul<&'static Nul<u8>>,
                     );
                     if c.is_ok() { b.status.unsavedWork = UnsavedWorkFlag::Saved };
                     c.is_ok()
+                },
+                Key::Ctrl('z') => unsafe {
+                    tb_shutdown();
+                    let c = ::libc::raise(::libc::SIGSTOP);
+                    tb_init();
+                    0 == c
                 },
                 Key::Backspace => b.deleteBack(),
                 Key::Tab     => b.insert('\t'),
