@@ -235,11 +235,13 @@ fn main(args: &'static Nul<&'static Nul<u8>>,
     let path: &'static Nul<u8> = args.iter().skip(1).next().expect("no file given");
     let mut b = EditBuffer {
         buffer: Buffer {
-            xss: Vec::from_iter(open_at(None, path, OpenMode::RdOnly, OpenFlags::empty(), FileMode::empty())
-                                    .unwrap().split(|x| x == b'\n', false).map(Result::<_, OsErr>::unwrap)
-                                    .map(|s| Vec::from_iter(decode_utf8(s.into_iter())
-                                                                .map(|r| r.unwrap_or('\u{FFFD}'))).ok()
-                                                 .expect("alloc failed"))).ok().expect("alloc failed"),
+            xss: match open_at(None, path, OpenMode::RdOnly, OpenFlags::empty(), FileMode::empty()) {
+                Ok(f) => Vec::from_iter(f.split(|x| x == b'\n', false).map(Result::<_, OsErr>::unwrap)
+                                         .map(|s| Vec::from_iter(decode_utf8(s.into_iter())
+                                                                     .map(|r| r.unwrap_or('\u{FFFD}'))).ok().expect("alloc failed"))).ok().expect("alloc failed"),
+                Err(OsErr::Unknown(e)) if ::libc::ENOENT == e as _ => { let mut xss = Vec::new(); xss.push(Vec::new()).unwrap(); xss },
+                Err(e) => panic!("failed to open file: {:?}", e),
+            },
             pt: (0, 1),
         },
         actLog: ActLog::new(),
