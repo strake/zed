@@ -1,6 +1,4 @@
-#![feature(decode_utf8)]
 #![feature(start)]
-#![feature(unicode)]
 
 extern crate std as core;
 
@@ -10,13 +8,13 @@ extern crate cursebox;
 extern crate libc;
 extern crate null_terminated;
 extern crate unix;
+extern crate utf;
 
 mod actLog;
 mod io;
 
 use actLog::{ Act, ActLog };
 use containers::collections::*;
-use core::char::decode_utf8;
 use core::cmp::*;
 use core::mem;
 use curse::{ Key };
@@ -26,6 +24,7 @@ use null_terminated::Nul;
 use unix::err::OsErr;
 use unix::file::*;
 use unix::str::OsStr;
+use utf::decode_utf8;
 
 use Attitude::*;
 use Reach::*;
@@ -147,18 +146,18 @@ fn drawStatus(ui: &mut curse::Term, stat: Status) {
     let bgcolor = curse::Color::Black;
     let curs_y = ui.height() - 1;
     for curs_x in 0..ui.width() {
-        ui.print_char(curs_x, curs_y, curse::REVERSE, fgcolor, bgcolor, ' ');
+        ui.print_char(curs_x, curs_y, curse::Face::REVERSE, fgcolor, bgcolor, ' ');
     }
     if stat.failure {
-        print_chars(ui, 0, curs_y, curse::REVERSE | curse::BOLD, fgcolor, bgcolor, "OPERATION FAILED".chars());
+        print_chars(ui, 0, curs_y, curse::Face::REVERSE | curse::Face::BOLD, fgcolor, bgcolor, "OPERATION FAILED".chars());
     } else if stat.unsavedWork == UnsavedWorkFlag::Warned {
-        print_chars(ui, 0, curs_y, curse::REVERSE, fgcolor, bgcolor, "WARNING: File modified; work will be lost! (once more to quit)".chars());
+        print_chars(ui, 0, curs_y, curse::Face::REVERSE, fgcolor, bgcolor, "WARNING: File modified; work will be lost! (once more to quit)".chars());
     } else {
-        print_chars(ui, 0, curs_y, curse::REVERSE, fgcolor, bgcolor,
+        print_chars(ui, 0, curs_y, curse::Face::REVERSE, fgcolor, bgcolor,
                     decode_utf8(stat.filePath.iter().map(|&b|b))
                         .map(|r| r.unwrap_or('\u{FFFD}')));
         for (i, &x) in ['[', match stat.unsavedWork { UnsavedWorkFlag::Saved => '-', _ => '*' }, ']'].into_iter().enumerate() {
-            ui.print_char(stat.filePath.len() + i + 1, curs_y, curse::REVERSE, fgcolor, bgcolor, x);
+            ui.print_char(stat.filePath.len() + i + 1, curs_y, curse::Face::REVERSE, fgcolor, bgcolor, x);
         }
     }
 }
@@ -241,7 +240,7 @@ fn main(args: &'static Nul<&'static Nul<u8>>,
                 Ok(f) => Vec::from_iter(f.split(|x| x == b'\n', false).map(Result::<_, OsErr>::unwrap)
                                          .map(|s| Vec::from_iter(decode_utf8(s.into_iter())
                                                                      .map(|r| r.unwrap_or('\u{FFFD}'))).ok().expect("alloc failed"))).ok().expect("alloc failed"),
-                Err(OsErr::Unknown(e)) if ::libc::ENOENT == e as _ => { let mut xss = Vec::new(); xss.push(Vec::new()).unwrap(); xss },
+                Err(::unix::err::ENOENT) => { let mut xss = Vec::new(); xss.push(Vec::new()).unwrap(); xss },
                 Err(e) => panic!("failed to open file: {:?}", e),
             },
             pt: (0, 1),
