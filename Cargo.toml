@@ -7,6 +7,7 @@ authors = ["M Farkas-Dyck <strake888@gmail.com>"]
 containers = { version = "0.8.1", default-features = false, features = ["default_allocator"] }
 curse = "0.1"
 cursebox = "0.1"
+fmt = "0.1"
 i-o = "0.4"
 loca = "0.6"
 libc = { version = "0.2", default-features = false }

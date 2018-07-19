@@ -5,6 +5,7 @@ extern crate std as core;
 extern crate containers;
 extern crate curse;
 extern crate cursebox;
+extern crate fmt;
 extern crate libc;
 extern crate null_terminated;
 extern crate unix;
@@ -132,33 +133,58 @@ fn draw(ui: &mut curse::Term, b: &EditBuffer, topRow: usize) {
             curs_x = curse(curs_x, x);
         }
     }
-    drawStatus(ui, b.status);
+    drawStatus(ui, b.status, b.buffer.pt, b.buffer.xss.len());
     ui.set_cursor(b.buffer.xss[b.buffer.pt.1 - 1].iter().take(b.buffer.pt.0).fold(0, curse), b.buffer.pt.1 - topRow);
     ui.freshen();
 }
 
-fn print_chars<I: Iterator<Item = char>>(ui: &mut curse::Term, x_pos: usize, y_pos: usize, face: curse::Face, fg: curse::Color, bg: curse::Color, xs: I) {
-    for (i, x) in xs.enumerate() { ui.print_char(x_pos+i, y_pos, face, fg, bg, x) }
+fn drawStatus(ui: &mut curse::Term, stat: Status, pt: (usize, usize), n: usize) {
+    let fg = if stat.failure { curse::Color::Red } else { curse::Color::White };
+    let bg = curse::Color::Black;
+    let y = ui.height() - 1;
+    for x in 0..ui.width() {
+        ui.print_char(x, y, curse::Face::REVERSE, fg, bg, ' ');
+    }
+    let mut pr = ScreenPrinter { pt: (0, y), fg, bg, face: curse::Face::REVERSE, term: ui };
+    use core::fmt::Write;
+    if stat.failure {
+        pr.face |= curse::Face::BOLD;
+        pr.write_str("OPERATION FAILED")
+    } else if stat.unsavedWork == UnsavedWorkFlag::Warned {
+        pr.write_str("WARNING: File modified; work will be lost! (once more to quit)")
+    } else {
+        write!(&mut pr, "{} [{}] ({}/{}),{}",
+               ::fmt::Items(decode_utf8(stat.filePath.iter().cloned()).map(|x| x.unwrap_or('\u{FFFD}'))),
+               match stat.unsavedWork { UnsavedWorkFlag::Saved => '-', _ => '*' }, pt.1, n, pt.0)
+    }.unwrap_or(())
 }
 
-fn drawStatus(ui: &mut curse::Term, stat: Status) {
-    let fgcolor = if stat.failure { curse::Color::Red } else { curse::Color::White };
-    let bgcolor = curse::Color::Black;
-    let curs_y = ui.height() - 1;
-    for curs_x in 0..ui.width() {
-        ui.print_char(curs_x, curs_y, curse::Face::REVERSE, fgcolor, bgcolor, ' ');
-    }
-    if stat.failure {
-        print_chars(ui, 0, curs_y, curse::Face::REVERSE | curse::Face::BOLD, fgcolor, bgcolor, "OPERATION FAILED".chars());
-    } else if stat.unsavedWork == UnsavedWorkFlag::Warned {
-        print_chars(ui, 0, curs_y, curse::Face::REVERSE, fgcolor, bgcolor, "WARNING: File modified; work will be lost! (once more to quit)".chars());
-    } else {
-        print_chars(ui, 0, curs_y, curse::Face::REVERSE, fgcolor, bgcolor,
-                    decode_utf8(stat.filePath.iter().map(|&b|b))
-                        .map(|r| r.unwrap_or('\u{FFFD}')));
-        for (i, &x) in ['[', match stat.unsavedWork { UnsavedWorkFlag::Saved => '-', _ => '*' }, ']'].into_iter().enumerate() {
-            ui.print_char(stat.filePath.len() + i + 1, curs_y, curse::Face::REVERSE, fgcolor, bgcolor, x);
+#[derive(Debug)]
+struct ScreenPrinter<'a> {
+    pt: (usize, usize),
+    fg: curse::Color,
+    bg: curse::Color,
+    face: curse::Face,
+    term: &'a mut curse::Term,
+}
+
+impl<'a> ScreenPrinter<'a> {
+    #[inline]
+    fn print_chars<I: Iterator<Item = char>>(&mut self, xs: I) -> usize {
+        let mut n = 0;
+        for (i, x) in xs.enumerate() {
+            self.term.print_char(self.pt.0+i, self.pt.1, self.face, self.fg, self.bg, x);
+            n += 1;
         }
+        n
+    }
+}
+
+impl<'a> ::core::fmt::Write for ScreenPrinter<'a> {
+    #[inline]
+    fn write_str(&mut self, s: &str) -> ::core::fmt::Result {
+        self.pt.0 += self.print_chars(s.chars());
+        Ok(())
     }
 }
 
