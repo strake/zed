@@ -1,13 +1,20 @@
+#![no_std]
+
+#![feature(core_intrinsics)]
+#![feature(lang_items)]
+#![feature(panic_implementation)]
+#![feature(panic_info_message)]
 #![feature(start)]
 
-extern crate std as core;
-
 extern crate containers;
-extern crate curse;
 extern crate cursebox;
+extern crate default_allocator;
 extern crate fmt;
 extern crate libc;
+extern crate loca;
 extern crate null_terminated;
+#[macro_use]
+extern crate syscall;
 extern crate unix;
 extern crate utf;
 
@@ -18,14 +25,14 @@ use actLog::{ Act, ActLog };
 use containers::collections::*;
 use core::cmp::*;
 use core::mem;
-use curse::{ Key };
 use cursebox::*;
 use io::*;
+use loca::Alloc;
 use null_terminated::Nul;
 use unix::err::OsErr;
 use unix::file::*;
 use unix::str::OsStr;
-use utf::decode_utf8;
+use utf::{UtfExt, decode_utf8};
 
 use Attitude::*;
 use Reach::*;
@@ -118,37 +125,36 @@ enum Reach { End, Unit }
 
 fn nextTabStop(logTS: usize, pos: usize) -> usize { (pos + (1 << logTS)) & (!0 << logTS) }
 
-fn draw(ui: &mut curse::Term, b: &EditBuffer, topRow: usize) {
+fn draw<A: Alloc>(ui: &mut cursebox::UI<A>, b: &EditBuffer, topRow: usize) {
     assert!(topRow >= 1);
     let logTabStop = 3;
-    let curse = |curs_x, p: &char| match *p {
+    let curse = |curs_x, p: char| match p {
         '\t' => nextTabStop(logTabStop, curs_x),
         _ => curs_x + 1
     };
     ui.clear();
     for (curs_y, xs) in b.buffer.xss.iter().skip(topRow - 1).enumerate().take(ui.height() - 1) {
         let mut curs_x = 0;
-        for x in xs.iter() {
-            ui.print_char(curs_x, curs_y, curse::Face::empty(), curse::Color::White, curse::Color::Black, *x);
+        for &x in xs.iter() {
+            if let Some(p) = ui.cells_mut().at_mut(curs_x, curs_y) { *p = Cell { ch: x as _, fg: cursebox::Attr::White, bg: cursebox::Attr::Black } }
             curs_x = curse(curs_x, x);
         }
     }
     drawStatus(ui, b.status, b.buffer.pt, b.buffer.xss.len());
-    ui.set_cursor(b.buffer.xss[b.buffer.pt.1 - 1].iter().take(b.buffer.pt.0).fold(0, curse), b.buffer.pt.1 - topRow);
-    ui.freshen();
+    ui.set_cursor(b.buffer.xss[b.buffer.pt.1 - 1].iter().cloned().take(b.buffer.pt.0).fold(0, curse), b.buffer.pt.1 - topRow);
+    ui.present();
 }
 
-fn drawStatus(ui: &mut curse::Term, stat: Status, pt: (usize, usize), n: usize) {
-    let fg = if stat.failure { curse::Color::Red } else { curse::Color::White };
-    let bg = curse::Color::Black;
+fn drawStatus<A: Alloc>(ui: &mut cursebox::UI<A>, stat: Status, pt: (usize, usize), n: usize) {
+    let fg = cursebox::Attr::Black;
+    let bg = if stat.failure { cursebox::Attr::Red } else { cursebox::Attr::White };
     let y = ui.height() - 1;
     for x in 0..ui.width() {
-        ui.print_char(x, y, curse::Face::REVERSE, fg, bg, ' ');
+        if let Some(p) = ui.cells_mut().at_mut(x, y) { *p = Cell { ch: ' ' as _, fg, bg } }
     }
-    let mut pr = ScreenPrinter { pt: (0, y), fg, bg, face: curse::Face::REVERSE, term: ui };
+    let mut pr = ScreenPrinter { pt: (0, y), fg, bg, term: ui };
     use core::fmt::Write;
     if stat.failure {
-        pr.face |= curse::Face::BOLD;
         pr.write_str("OPERATION FAILED")
     } else if stat.unsavedWork == UnsavedWorkFlag::Warned {
         pr.write_str("WARNING: File modified; work will be lost! (once more to quit)")
@@ -160,27 +166,26 @@ fn drawStatus(ui: &mut curse::Term, stat: Status, pt: (usize, usize), n: usize) 
 }
 
 #[derive(Debug)]
-struct ScreenPrinter<'a> {
+struct ScreenPrinter<'a, A: 'a + Alloc> {
     pt: (usize, usize),
-    fg: curse::Color,
-    bg: curse::Color,
-    face: curse::Face,
-    term: &'a mut curse::Term,
+    fg: cursebox::Attr,
+    bg: cursebox::Attr,
+    term: &'a mut cursebox::UI<A>,
 }
 
-impl<'a> ScreenPrinter<'a> {
+impl<'a, A: Alloc> ScreenPrinter<'a, A> {
     #[inline]
     fn print_chars<I: Iterator<Item = char>>(&mut self, xs: I) -> usize {
         let mut n = 0;
         for (i, x) in xs.enumerate() {
-            self.term.print_char(self.pt.0+i, self.pt.1, self.face, self.fg, self.bg, x);
+            if let Some(p) = self.term.cells_mut().at_mut(self.pt.0+i, self.pt.1) { *p = Cell { ch: x as _, fg: self.fg, bg: self.bg } }
             n += 1;
         }
         n
     }
 }
 
-impl<'a> ::core::fmt::Write for ScreenPrinter<'a> {
+impl<'a, A: Alloc> ::core::fmt::Write for ScreenPrinter<'a, A> {
     #[inline]
     fn write_str(&mut self, s: &str) -> ::core::fmt::Result {
         self.pt.0 += self.print_chars(s.chars());
@@ -246,9 +251,9 @@ impl<'a> EditBuffer<'a> {
     #[inline] fn reag(&mut self) -> bool { match self.actLog.reag() { None => true, Some(act) => self.buffer.ag(act.pt, &act.insert, &act.delete) } }
 }
 
+#[inline]
 fn encode_utf8_raw(x: char, b: &mut [u8]) -> Option<usize> {
-    let l = x.len_utf8();
-    if b.len() < l { None } else { x.encode_utf8(b); Some(l) }
+    x.try_encode_utf8(b).map(|s| s.len())
 }
 
 #[start]
@@ -262,7 +267,7 @@ fn main(args: &'static Nul<&'static Nul<u8>>,
     let path: &'static Nul<u8> = args.iter().skip(1).next().expect("no file given");
     let mut b = EditBuffer {
         buffer: Buffer {
-            xss: match open_at(None, path, OpenMode::RdOnly, OpenFlags::empty(), FileMode::empty()) {
+            xss: match open_at(None, path, OpenMode::RdOnly, FileMode::empty()) {
                 Ok(f) => Vec::from_iter(f.split(|x| x == b'\n', false).map(Result::<_, OsErr>::unwrap)
                                          .map(|s| Vec::from_iter(decode_utf8(s.into_iter())
                                                                      .map(|r| r.unwrap_or('\u{FFFD}'))).ok().expect("alloc failed"))).ok().expect("alloc failed"),
@@ -278,23 +283,31 @@ fn main(args: &'static Nul<&'static Nul<u8>>,
             failure: false,
         },
     };
-    let mut ui = curse::Term::init().unwrap();
+    let mut ui = cursebox::UI::new_in(default_allocator::Heap).unwrap();
+    let mut topRow = 1;
 
     loop {
-        draw(&mut ui, &b, 1);
-        b.status.failure = !match ui.next_event(None) {
-            Ok(Some(curse::Event::Key(key))) => match key {
+        {
+            let h = ui.height();
+            if b.buffer.pt.1 <  topRow         { topRow = b.buffer.pt.1; }
+            if b.buffer.pt.1 >= topRow + h - 1 { topRow = b.buffer.pt.1 + 1 - h; }
+        }
+        draw(&mut ui, &b, topRow);
+        b.status.failure = !match ui.fetch_event(None) {
+            Ok(Some(cursebox::Event::Key(mod_, key))) => match key {
                 Key::Left  => { b.mv(Left,  Unit); true },
                 Key::Right => { b.mv(Right, Unit); true },
                 Key::Up    => { b.mv(Up,    Unit); true },
                 Key::Down  => { b.mv(Down,  Unit); true },
                 Key::Home  => { b.mv(Left,  End);  true },
                 Key::End   => { b.mv(Right, End);  true },
-                Key::Ctrl('c') => match b.status.unsavedWork {
+                Key::PgUp  => { for _ in 0..ui.height() { b.mv(Up,    Unit); } true },
+                Key::PgDn  => { for _ in 0..ui.height() { b.mv(Down,  Unit); } true },
+                Key::Char('\x03' /* ^C */) => match b.status.unsavedWork {
                     UnsavedWorkFlag::Saved | UnsavedWorkFlag::Warned => { return 0 },
                     UnsavedWorkFlag::Modified => { b.status.unsavedWork = UnsavedWorkFlag::Warned; true },
                 },
-                Key::Ctrl('x') => {
+                Key::Char('\x18' /* ^X */) => {
                     let c = atomic_write_file_at(
                         None, path, Clobber, (FilePermission::Read | FilePermission::Write) << USR,
                         |mut f| {
@@ -310,15 +323,14 @@ fn main(args: &'static Nul<&'static Nul<u8>>,
                     if c.is_ok() { b.status.unsavedWork = UnsavedWorkFlag::Saved };
                     c.is_ok()
                 },
-                Key::Ctrl('z') => unsafe {
-                    tb_shutdown();
-                    let c = ::libc::raise(::libc::SIGSTOP);
-                    tb_init();
+                Key::Char('\x1A' /* ^Z */) => unsafe {
+                    ui.stop();
+                    let c = syscall!(KILL, syscall!(GETPID), ::libc::SIGSTOP);
+                    ui.start();
                     0 == c
                 },
-                Key::Backspace => b.deleteBack(),
-                Key::Tab     => b.insert('\t'),
-                Key::Enter   => b.insert('\n'),
+                Key::Char('\x08') => b.deleteBack(),
+                Key::Char('\r') => b.insert('\n'),
                 Key::Char(x) => b.insert(x),
                 _ => true,
             },
@@ -327,3 +339,31 @@ fn main(args: &'static Nul<&'static Nul<u8>>,
         };
     }
 }
+
+#[cold]
+#[inline(never)]
+#[panic_implementation]
+#[no_mangle]
+pub fn panic(info: &::core::panic::PanicInfo) -> ! {
+    #[cfg(debug_assertions)]
+    {
+        use core::fmt::Write;
+        let mut pr = File::new_unchecked(2);
+        match (info.location(), info.message()) {
+            (None, None) => writeln!(pr, "PANIC!"),
+            (Some(loc), None) => writeln!(pr, "PANIC at {}!", loc),
+            (None, Some(msg)) => writeln!(pr, "PANIC: {}", msg),
+            (Some(loc), Some(msg)) => writeln!(pr, "PANIC at {}: {}", loc, msg),
+        }.unwrap_or(())
+    }
+
+    let _ = info;
+
+    unsafe {
+        syscall!(KILL, syscall!(GETPID), ::libc::SIGABRT);
+        ::core::intrinsics::abort()
+    }
+}
+
+#[lang = "eh_personality"]
+extern "C" fn eh_personality() {}
