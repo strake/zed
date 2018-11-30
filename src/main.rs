@@ -1,8 +1,6 @@
 #![no_std]
 
 #![feature(core_intrinsics)]
-#![feature(lang_items)]
-#![feature(panic_implementation)]
 #![feature(panic_info_message)]
 #![feature(start)]
 
@@ -267,7 +265,7 @@ fn main(args: &'static Nul<&'static Nul<u8>>,
     let path: &'static Nul<u8> = args.iter().skip(1).next().expect("no file given");
     let mut b = EditBuffer {
         buffer: Buffer {
-            xss: match open_at(None, path, OpenMode::RdOnly, FileMode::empty()) {
+            xss: match open_at(None, path, OpenMode::RdOnly, None) {
                 Ok(f) => Vec::from_iter(f.split(|x| x == b'\n', false).map(Result::<_, OsErr>::unwrap)
                                          .map(|s| Vec::from_iter(decode_utf8(s.into_iter())
                                                                      .map(|r| r.unwrap_or('\u{FFFD}'))).ok().expect("alloc failed"))).ok().expect("alloc failed"),
@@ -342,8 +340,7 @@ fn main(args: &'static Nul<&'static Nul<u8>>,
 
 #[cold]
 #[inline(never)]
-#[panic_implementation]
-#[no_mangle]
+#[panic_handler]
 pub fn panic(info: &::core::panic::PanicInfo) -> ! {
     #[cfg(debug_assertions)]
     {
@@ -364,6 +361,3 @@ pub fn panic(info: &::core::panic::PanicInfo) -> ! {
         ::core::intrinsics::abort()
     }
 }
-
-#[lang = "eh_personality"]
-extern "C" fn eh_personality() {}

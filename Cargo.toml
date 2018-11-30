@@ -11,7 +11,7 @@ fmt = "0.1"
 i-o = "0.4"
 loca = "0.7"
 libc = { version = "0.2", default-features = false }
-null-terminated = "0.2.6"
+null-terminated = "0.3"
 syscall = "0.2"
 unix = "0.6.0"
 utf = "0.1.1"
