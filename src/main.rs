@@ -22,7 +22,6 @@ mod io;
 use actLog::{ Act, ActLog };
 use containers::collections::*;
 use core::cmp::*;
-use core::mem;
 use cursebox::*;
 use io::*;
 use loca::Alloc;
@@ -111,7 +110,7 @@ impl Buffer {
     #[inline]
     fn ag(&mut self, pt: (usize, usize), insert: &Vec<char>, delete: &Vec<char>) -> bool {
         self.pt = pt;
-        for &_ in delete.iter() { match self.deleteForth() { None => return false, _ => () } };
+        for &_ in delete.iter() { if let None = self.deleteForth() { return false } };
         for &x in insert.iter() { if !self.insert(x) { return false } };
         true
     }
@@ -220,9 +219,9 @@ struct EditBuffer<'a> {
 impl<'a> EditBuffer<'a> {
     #[inline] fn insert(&mut self, x: char) -> bool {
         let pt = self.buffer.pt;
-        let xs = match Vec::from_iter([x].into_iter().map(|p|*p)) { Err(_) => return false, Ok(xs) => xs };
+        let xs = match Vec::from_iter([x].iter().cloned()) { Err(_) => return false, Ok(xs) => xs };
         self.actLog.reserve(1) && self.buffer.insert(x) &&
-        self.actLog.ag(Act { pt: pt, insert: xs, delete: Vec::new() }) &&
+        self.actLog.ag(Act { pt, insert: xs, delete: Vec::new() }) &&
         { self.status.unsavedWork = UnsavedWorkFlag::Modified; true }
     }
 
@@ -257,12 +256,12 @@ fn encode_utf8_raw(x: char, b: &mut [u8]) -> Option<usize> {
 #[start]
 fn start(_: isize, c_argv: *const *const u8) -> isize {
     extern { static environ: *const *const u8; }
-    unsafe { main(mem::transmute(c_argv), mem::transmute(environ)) }
+    unsafe { main(&*(c_argv as *const _), &*(environ as *const _)) }
 }
 
 fn main(args: &'static Nul<&'static Nul<u8>>,
         _env: &'static Nul<&'static Nul<u8>>) -> isize {
-    let path: &'static Nul<u8> = args.iter().skip(1).next().expect("no file given");
+    let path: &'static Nul<u8> = args.iter().nth(1).expect("no file given");
     let mut b = EditBuffer {
         buffer: Buffer {
             xss: match open_at(None, path, OpenMode::RdOnly, None) {
@@ -312,7 +311,7 @@ fn main(args: &'static Nul<&'static Nul<u8>>,
                             for (k, xs) in b.buffer.xss.iter().enumerate() {
                                 try!(io::writeCode(
                                          encode_utf8_raw, &mut f,
-                                         if k > 0 { "\n" } else { "" }.chars().chain(xs.iter().map(|p|*p))
+                                         if k > 0 { "\n" } else { "" }.chars().chain(xs.iter().cloned())
                                 ));
                             }
                             f.flush()
