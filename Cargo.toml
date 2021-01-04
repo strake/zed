@@ -5,15 +5,15 @@ authors = ["M Farkas-Dyck <strake888@gmail.com>"]
 
 [dependencies]
 containers = { version = "0.9.0", default-features = false, features = ["default_allocator"] }
-cursebox = "0.2.4"
+cursebox = "0.2.10"
 default_allocator = "0.3"
 fmt = "0.1"
 i-o = "0.4"
 loca = "0.7"
-libc = { version = "0.2", default-features = false }
+libc = { package = "libc-interface", version = "0.1.2" }
 null-terminated = "0.3"
-syscall = "0.2"
-unix = "0.6.0"
+system-call = "0.1.2"
+unix = "0.6.10"
 utf = "0.1.1"
 
 [profile.dev]

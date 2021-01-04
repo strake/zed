@@ -2,6 +2,7 @@
 
 #![feature(core_intrinsics)]
 #![feature(panic_info_message)]
+#![feature(proc_macro_hygiene)]
 #![feature(start)]
 
 extern crate containers;
@@ -26,7 +27,6 @@ use cursebox::*;
 use io::*;
 use loca::Alloc;
 use null_terminated::Nul;
-use unix::err::OsErr;
 use unix::file::*;
 use unix::str::OsStr;
 use utf::{UtfExt, decode_utf8};
@@ -255,20 +255,19 @@ fn encode_utf8_raw(x: char, b: &mut [u8]) -> Option<usize> {
 
 #[start]
 fn start(_: isize, c_argv: *const *const u8) -> isize {
-    extern { static environ: *const *const u8; }
-    unsafe { main(&*(c_argv as *const _), &*(environ as *const _)) }
+    unsafe { main(&*(c_argv as *const _), unix::environ) }
 }
 
 fn main(args: &'static Nul<&'static Nul<u8>>,
-        _env: &'static Nul<&'static Nul<u8>>) -> isize {
+        _env: unix::Environ<'static>) -> isize {
     let path: &'static Nul<u8> = args.iter().nth(1).expect("no file given");
     let mut b = EditBuffer {
         buffer: Buffer {
             xss: match open_at(None, path, OpenMode::RdOnly, None) {
-                Ok(f) => Vec::from_iter(f.split(|x| x == b'\n', false).map(Result::<_, OsErr>::unwrap)
+                Ok(f) => Vec::from_iter(f.split(|x| x == b'\n', false).map(Result::<_, unix::Error>::unwrap)
                                          .map(|s| Vec::from_iter(decode_utf8(s.into_iter())
                                                                      .map(|r| r.unwrap_or('\u{FFFD}'))).ok().expect("alloc failed"))).ok().expect("alloc failed"),
-                Err(::unix::err::ENOENT) => { let mut xss = Vec::new(); xss.push(Vec::new()).unwrap(); xss },
+                Err(::unix::Error::ENOENT) => { let mut xss = Vec::new(); xss.push(Vec::new()).unwrap(); xss },
                 Err(e) => panic!("failed to open file: {:?}", e),
             },
             pt: (0, 1),
