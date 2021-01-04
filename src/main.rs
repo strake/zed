@@ -5,34 +5,23 @@
 #![feature(proc_macro_hygiene)]
 #![feature(start)]
 
-extern crate containers;
-extern crate cursebox;
-extern crate default_allocator;
-extern crate fmt;
-extern crate libc;
-extern crate loca;
-extern crate null_terminated;
-#[macro_use]
-extern crate syscall;
-extern crate unix;
-extern crate utf;
-
 mod actLog;
 mod io;
 
-use actLog::{ Act, ActLog };
+use crate::actLog::{ Act, ActLog };
 use containers::collections::*;
 use core::cmp::*;
 use cursebox::*;
-use io::*;
+use crate::io::*;
 use loca::Alloc;
 use null_terminated::Nul;
+use syscall::syscall;
 use unix::file::*;
 use unix::str::OsStr;
 use utf::{UtfExt, decode_utf8};
 
-use Attitude::*;
-use Reach::*;
+use crate::Attitude::*;
+use crate::Reach::*;
 
 struct Buffer {
     xss: Vec<Vec<char>>,
@@ -290,7 +279,7 @@ fn main(args: &'static Nul<&'static Nul<u8>>,
         }
         draw(&mut ui, &b, topRow);
         b.status.failure = !match ui.fetch_event(None) {
-            Ok(Some(cursebox::Event::Key(mod_, key))) => match key {
+            Ok(Some(cursebox::Event::Key(_mod_, key))) => match key {
                 Key::Left  => { b.mv(Left,  Unit); true },
                 Key::Right => { b.mv(Right, Unit); true },
                 Key::Up    => { b.mv(Up,    Unit); true },
@@ -308,10 +297,10 @@ fn main(args: &'static Nul<&'static Nul<u8>>,
                         None, path, Clobber, (FilePermission::Read | FilePermission::Write) << USR,
                         |mut f| {
                             for (k, xs) in b.buffer.xss.iter().enumerate() {
-                                try!(io::writeCode(
-                                         encode_utf8_raw, &mut f,
-                                         if k > 0 { "\n" } else { "" }.chars().chain(xs.iter().cloned())
-                                ));
+                                io::writeCode(
+                                    encode_utf8_raw, &mut f,
+                                    if k > 0 { "\n" } else { "" }.chars().chain(xs.iter().cloned())
+                                )?;
                             }
                             f.flush()
                         }

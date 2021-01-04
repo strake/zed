@@ -1,7 +1,5 @@
-extern crate io as _io;
-
 use core::mem;
-pub use self::_io::*;
+pub use io::*;
 
 fn fst2<S, T>((x, _): (S, T)) -> S { x }
 
@@ -22,7 +20,7 @@ pub fn writeCode<Codon, Encode, I, T, W>(mut encode: Encode, w: &mut W, xs : I) 
             }
         }
     }
-    try!(w.write_all(&buf[0..pos]).map_err(fst2));
+    w.write_all(&buf[0..pos]).map_err(fst2)?;
     nBytesWritten += pos;
     Ok(nBytesWritten)
 }
