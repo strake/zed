@@ -312,6 +312,7 @@ fn main(args: &'static Nul<&'static Nul<u8>>,
                     ui.start();
                     0 == c
                 },
+                Key::Char('\x1F' /* ^_ */) => b.unag(),
                 Key::Char('\x08') => b.deleteBack(),
                 Key::Char('\r') => b.insert('\n'),
                 Key::Char(x) => b.insert(x),
