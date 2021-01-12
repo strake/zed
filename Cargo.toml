@@ -14,6 +14,7 @@ loca = "0.7"
 libc = { package = "libc-interface", version = "0.1.2" }
 null-terminated = "0.3"
 system-call = "0.1.2"
+unicode-brackets = "0.1.1"
 unix = "0.6.10"
 utf = "0.1.1"
 

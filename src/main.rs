@@ -1,5 +1,6 @@
 #![no_std]
 
+#![feature(bindings_after_at)]
 #![feature(core_intrinsics)]
 #![feature(panic_info_message)]
 #![feature(proc_macro_hygiene)]
@@ -103,6 +104,12 @@ impl Buffer {
         for &x in insert.iter() { if !self.insert(x) { return false } };
         true
     }
+
+    #[inline]
+    fn at(&self, x: usize, y: usize) -> Option<&char> { self.xss.get(x).and_then(|a| a.get(y)) }
+
+    #[inline]
+    fn at_mut(&mut self, x: usize, y: usize) -> Option<&mut char> { self.xss.get_mut(x).and_then(|a| a.get_mut(y)) }
 }
 
 enum Attitude { Left, Right, Up, Down }
@@ -111,6 +118,29 @@ enum Reach { End, Unit }
 
 fn nextTabStop(logTS: usize, pos: usize) -> usize { (pos + (1 << logTS)) & (!0 << logTS) }
 
+enum BracketSpec<A> {
+    Mismatch(A),
+    Match(A, A),
+}
+
+fn find_matching_brackets(xss: &Vec<Vec<char>>, topRow: usize, height: usize) -> Option<Vec<BracketSpec<(usize, usize, &char)>>> {
+    use BracketSpec::*;
+    use unicode_brackets::UnicodeBrackets;
+
+    assert!(topRow >= 1);
+    let mut stack = Vec::<(usize, usize, &char)>::with_capacity(16)?;
+    let mut pairs = Vec::with_capacity(64)?;
+    for p@(_, _, &x) in xss.iter().enumerate().skip(topRow - 1).take(height - 1).flat_map(move |(y, zs)| zs.iter().enumerate().map(move |(x, z)| (x, y, z))) {
+        if x.is_open_bracket() { stack.push(p).ok()?; }
+        if x.is_close_bracket() {
+            if let Some(&q@(_, _, &y)) = stack.last() {
+                if x.to_open_bracket() == y { pairs.push(Match(q, p)).ok()?; } else { pairs.push(Mismatch(p)).ok()?; pairs.push(Mismatch(q)).ok()?; }
+            }
+        }
+    }
+    Some(pairs)
+}
+
 fn draw<A: Alloc>(ui: &mut cursebox::UI<A>, b: &EditBuffer, topRow: usize) {
     assert!(topRow >= 1);
     let logTabStop = 3;
@@ -118,6 +148,7 @@ fn draw<A: Alloc>(ui: &mut cursebox::UI<A>, b: &EditBuffer, topRow: usize) {
         '\t' => nextTabStop(logTabStop, curs_x),
         _ => curs_x + 1
     };
+    let mut matching_bracket_specs = find_matching_brackets(&b.buffer.xss, topRow, ui.height());
     ui.clear();
     for (curs_y, xs) in b.buffer.xss.iter().skip(topRow - 1).enumerate().take(ui.height() - 1) {
         let mut curs_x = 0;
