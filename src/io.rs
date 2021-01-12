@@ -3,9 +3,8 @@ pub use io::*;
 
 fn fst2<S, T>((x, _): (S, T)) -> S { x }
 
-pub fn writeCode<Codon, Encode, I, T, W>(mut encode: Encode, w: &mut W, xs : I) -> Result<usize, W::Err>
+pub fn writeCodeWithBuf<Codon, Encode, I, T, W>(mut encode: Encode, w: &mut W, xs : I, buf: &mut [Codon]) -> Result<usize, W::Err>
   where Codon: Copy, Encode: FnMut(T, &mut [Codon]) -> Option<usize>, I: Iterator<Item = T>, T: Copy, W: Write<Codon>, W::Err: From<EndOfFile> {
-    let mut buf: [Codon; 4096] = unsafe { mem::MaybeUninit::uninit().assume_init() };
     let mut pos = 0;
     let mut nBytesWritten = 0;
     for x in xs {
@@ -23,4 +22,10 @@ pub fn writeCode<Codon, Encode, I, T, W>(mut encode: Encode, w: &mut W, xs : I) 
     w.write_all(&buf[0..pos]).map_err(fst2)?;
     nBytesWritten += pos;
     Ok(nBytesWritten)
+}
+
+pub fn writeCode<Codon, Encode, I, T, W>(encode: Encode, w: &mut W, xs : I) -> Result<usize, W::Err>
+  where Codon: Copy, Encode: FnMut(T, &mut [Codon]) -> Option<usize>, I: Iterator<Item = T>, T: Copy, W: Write<Codon>, W::Err: From<EndOfFile> {
+    let mut buf: [Codon; 4096] = unsafe { mem::MaybeUninit::uninit().assume_init() };
+    writeCodeWithBuf(encode, w, xs, &mut buf[..])
 }

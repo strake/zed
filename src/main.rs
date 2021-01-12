@@ -296,12 +296,10 @@ fn main(args: &'static Nul<&'static Nul<u8>>,
                     let c = atomic_write_file_at(
                         None, path, Clobber, (FilePermission::Read | FilePermission::Write) << USR,
                         |mut f| {
-                            for (k, xs) in b.buffer.xss.iter().enumerate() {
-                                io::writeCode(
-                                    encode_utf8_raw, &mut f,
-                                    if k > 0 { "\n" } else { "" }.chars().chain(xs.iter().cloned())
-                                )?;
-                            }
+                            io::writeCode(
+                                encode_utf8_raw, &mut f,
+                                b.buffer.xss.iter().enumerate().flat_map(|(k, xs)| if k > 0 { "\n" } else { "" }.chars().chain(xs.iter().cloned())),
+                            )?;
                             f.flush()
                         }
                     );
